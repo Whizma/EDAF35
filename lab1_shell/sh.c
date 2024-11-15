@@ -18,7 +18,8 @@
 #define READ_END (0)
 #define WRITE_END (1)
 
-typedef enum {
+typedef enum
+{
   AMPERSAND, /* & */
   NEWLINE,   /* end of line reached. */
   NORMAL,    /* file name or command option. */
@@ -38,9 +39,11 @@ static list_t *path_dir_list; /* list of directories in PATH. */
 static int input_fd;          /* for i/o redirection or pipe. */
 static int output_fd;         /* for i/o redirection or pipe */
 static int pipe_fd[2];
+static char previous_dir[MAXBUF]; 
 
 /* fetch_line: read one line from user and put it in input_buf. */
-int fetch_line(char *prompt) {
+int fetch_line(char *prompt)
+{
   int c;
   int count;
 
@@ -52,7 +55,8 @@ int fetch_line(char *prompt) {
 
   count = 0;
 
-  for (;;) {
+  for (;;)
+  {
 
     c = getchar();
 
@@ -62,12 +66,14 @@ int fetch_line(char *prompt) {
     if (count < MAXBUF)
       input_buf[count++] = c;
 
-    if (c == '\n' && count < MAXBUF) {
+    if (c == '\n' && count < MAXBUF)
+    {
       input_buf[count] = 0;
       return count;
     }
 
-    if (c == '\n') {
+    if (c == '\n')
+    {
       printf("too long input line\n");
       return fetch_line(prompt);
     }
@@ -75,8 +81,10 @@ int fetch_line(char *prompt) {
 }
 
 /* end_of_token: true if character c is not part of previous token. */
-static bool end_of_token(char c) {
-  switch (c) {
+static bool end_of_token(char c)
+{
+  switch (c)
+  {
   case 0:
   case ' ':
   case '\t':
@@ -94,7 +102,8 @@ static bool end_of_token(char c) {
 }
 
 /* gettoken: read one token and let *outptr point to it. */
-int gettoken(char **outptr) {
+int gettoken(char **outptr)
+{
   token_type_t type;
 
   *outptr = token;
@@ -104,7 +113,8 @@ int gettoken(char **outptr) {
 
   *token++ = *input_char;
 
-  switch (*input_char++) {
+  switch (*input_char++)
+  {
   case '\n':
     type = NEWLINE;
     break;
@@ -125,6 +135,10 @@ int gettoken(char **outptr) {
     type = PIPE;
     break;
 
+  case ';':
+    type = SEMICOLON;
+    break;
+
   default:
     type = NORMAL;
 
@@ -138,7 +152,8 @@ int gettoken(char **outptr) {
 }
 
 /* error: print error message using formatting string similar to printf. */
-void error(char *fmt, ...) {
+void error(char *fmt, ...)
+{
   va_list ap;
 
   fprintf(stderr, "%s: error: ", progname);
@@ -148,319 +163,343 @@ void error(char *fmt, ...) {
   va_end(ap);
 
   /* print system error code if errno is not zero. */
-  if (errno != 0) {
+  if (errno != 0)
+  {
     fprintf(stderr, ": ");
     perror(0);
-  } else
+  }
+  else
     fputc('\n', stderr);
 }
 
-int search_path(const char *command, char *resolved_path, size_t size) {
-  if (!path_dir_list || !command) {
+void change_directory(char **argv, int argc)
+{
+  char current_dir[MAXBUF];
+  bool changed = false;
+  getcwd(current_dir, MAXBUF);
+
+  if (argc > 2) {
+    printf("sh: %s: to many arguments\n", argv[0]);
+  } else if (argc == 1) {
+    char* home_dir = getenv("HOME");
+    if (home_dir && !chdir(home_dir)) {
+      changed = true;
+    }
+  } else if (strcmp(argv[1], "-") == 0 && chdir(previous_dir) == 0) {
+    printf("%s\n", previous_dir);
+    changed = true;
+  } else if (chdir(argv[1]) == 0) {
+    changed = true;
+  } else {
+    printf("sh: %s: %s: No such file or directory\n", argv[0], argv[1]);
+  }
+
+  if (changed) {
+    strcpy(previous_dir, current_dir);
+  }
+}
+
+void check_zombies()
+{
+  pid_t pid;
+  int status;
+
+  while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
+  {
+    if (WIFEXITED(status))
+    {
+      printf("Child process %d exited with status %d\n", pid, WEXITSTATUS(status));
+    }
+    else if (WIFSIGNALED(status))
+    {
+      printf("Child process %d terminated by signal %d\n", pid, WTERMSIG(status));
+    }
+  }
+}
+
+int search_path(const char *command, char *resolved_path, size_t size)
+{
+  if (!path_dir_list || !command)
+  {
     errno = EINVAL; // Invalid argument
     return -1;
+  }
+  list_t *current = path_dir_list;
+  do
+  {
+    snprintf(resolved_path, size, "%s/%s", (char *)current->data, command);
 
-    void change_directory(char **args) {
-      const char *path;
-      char current_directory[MAXBUF];
-      static char previous_directory[MAXBUF];
-
-      if (strcmp(args[1], "-") == 0) {
-        if (previous_directory[0] == '\0') {
-          fprintf(stderr, "cd: old dir not found\n");
-          return;
-        }
-        path = previous_directory;
-        printf("%s\n", path);
-      } else {
-        path = args[1];
-      }
-
-      if (getcwd(current_directory, sizeof(current_directory)) == NULL) {
-        perror("getcwd");
-        return;
-      }
-
-      if (chdir(path) == -1) {
-        perror("cd");
-        return;
-      }
-
-      strncpy(previous_directory, current_directory,
-              sizeof(previous_directory) - 1);
-      previous_directory[sizeof(previous_directory) - 1] = '\0';
+    if (access(resolved_path, X_OK) == 0)
+    {
+      return 0;
     }
+    current = current->succ;
+  } while (current != path_dir_list);
+  return -1;
+}
 
-    void check_zombies() {
-      pid_t pid;
-      int status;
+/* run_program: fork and exec a program. */
+void run_program(char **argv, int argc, bool foreground, bool doing_pipe)
+{
+  /* you need to fork, search for the command in argv[0],
+   * setup stdin and stdout of the child process, execv it.
+   * the parent should sometimes wait and sometimes not wait for
+   * the child process (you must figure out when). if foreground
+   * is true then basically you should wait but when we are
+   * running a command in a pipe such as PROG1 | PROG2 you might
+   * not want to wait for each of PROG1 and PROG2...
+   *
+   * hints:
+   *  snprintf is useful for constructing strings.
+   *  access is useful for checking wether a path refers to an
+   *      executable program.
+   *
+   *
+   */
+  char resolved_path[MAXBUF];
+  char *command = argv[0];
 
-      while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        if (WIFEXITED(status)) {
-          printf("Child process %d exited with status %d\n", pid,
-                 WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
-          printf("Child process %d terminated by signal %d\n", pid,
-                 WTERMSIG(status));
-        }
-      }
+  if (strcmp(argv[0], "cd") == 0)
+  {
+    change_directory(argv, argc);
+    return;
+  }
+
+  if (strchr(command, '/'))
+  {
+    strncpy(resolved_path, command, sizeof(resolved_path) - 1);
+    resolved_path[sizeof(resolved_path - 1)] = '\0';
+
+    if (access(resolved_path, X_OK) != 0)
+    {
+      fprintf(stderr, "Error: %s is not executable: %s\n", command, strerror(errno));
+      return;
     }
-
-    int search_path(const char *command, char *resolved_path, size_t size) {
-      if (!path_dir_list || !command) {
-        errno = EINVAL; // Invalid argument
-        return -1;
-      }
-      list_t *current = path_dir_list;
-      do {
-        snprintf(resolved_path, size, "%s/%s", (char *)current->data, command);
-
-        if (access(resolved_path, X_OK) == 0) {
-          return 0;
-        }
-        current = current->succ;
-      } while (current != path_dir_list);
-      return -1;
+  }
+  else
+  {
+    if (search_path(command, resolved_path, sizeof(resolved_path)) < 0)
+    {
+      fprintf(stderr, "Error: command %s not found in path\n", command);
+      return;
     }
+  }
 
-    /* run_program: fork and exec a program. */
-    void run_program(char **argv, int argc, bool foreground, bool doing_pipe) {
-      /* you need to fork, search for the command in argv[0],
-       * setup stdin and stdout of the child process, execv it.
-       * the parent should sometimes wait and sometimes not wait for
-       * the child process (you must figure out when). if foreground
-       * is true then basically you should wait but when we are
-       * running a command in a pipe such as PROG1 | PROG2 you might
-       * not want to wait for each of PROG1 and PROG2...
-       *
-       * hints:
-       *  snprintf is useful for constructing strings.
-       *  access is useful for checking wether a path refers to an
-       *      executable program.
-       *
-       *
-       */
-      char resolved_path[MAXBUF];
-      char *command = argv[0];
+  // fprintf(stderr, "Resolved command: %s\n", resolved_path);
 
-      if (strchr(command, '/')) {
-        strncpy(resolved_path, command, sizeof(resolved_path) - 1);
-        resolved_path[sizeof(resolved_path - 1)] = '\0';
+  pid_t pid = fork();
+  if (pid < 0)
+  {
+    fprintf(stderr, "Fork failed");
+    return;
+  }
+  else if (pid == 0)
+  {
+    // child process
 
-        if (access(resolved_path, X_OK) != 0) {
-          fprintf(stderr, "Error: %s is not executable: %s\n", command,
-                  strerror(errno));
-          return;
-        }
-      } else {
-        if (search_path(command, resolved_path, sizeof(resolved_path)) < 0) {
-          fprintf(stderr, "Error: command %s not found in path\n", command);
-          return;
-        }
-      }
-
-      fprintf(stderr, "Resolved command: %s\n", resolved_path);
-
-      pid_t pid = fork();
-      if (pid < 0) {
-        fprintf(stderr, "Fork failed");
-        return;
-      } else if (pid == 0) {
-        // child process
-
-        if (input_fd > 0) {
-          if (dup2(input_fd, STDIN_FILENO) < 0) {
-            perror("dup2 input failed\n");
-            exit(EXIT_FAILURE);
-          }
-          close(input_fd);
-        }
-
-        if (output_fd > 0) {
-          if (dup2(output_fd, STDOUT_FILENO) < 0) {
-            perror("dup2 output failed\n");
-          }
-          close(output_fd);
-        }
-
-        if (doing_pipe && argc > 0) {
-          close(STDOUT_FILENO);
-          dup(pipe_fd[WRITE_END]);
-          close(pipe_fd[READ_END]);
-          close(pipe_fd[WRITE_END]);
-        }
-
-        execv(resolved_path, argv);
-        perror("execv failed");
+    if (input_fd > 0)
+    {
+      if (dup2(input_fd, STDIN_FILENO) < 0)
+      {
+        perror("dup2 input failed\n");
         exit(EXIT_FAILURE);
-      } else {
-        // parent process
-        int status;
-        waitpid(pid, &status, 0);
-        fprintf(stderr, "Child process completed with status: %d\n", status);
-        if (foreground) {
-          int status;
-          waitpid(pid, &status, 0);
-          fprintf(stderr, "Child process completed with status: %d\n", status);
-        } else {
-          fprintf(stderr, "Running in the background with PID: %d\n", pid);
-        }
-        if (doing_pipe) {
-          close(pipe_fd[WRITE_END]);
-        }
       }
+      close(input_fd);
     }
 
-    void parse_line(void) {
-      char *argv[MAX_ARG + 1];
-      int argc;
-      // int pipe_fd[2]; /* 1 for producer and 0 for consumer. */
-      token_type_t type;
-      bool foreground;
-      bool doing_pipe;
+    if (output_fd > 0)
+    {
+      if (dup2(output_fd, STDOUT_FILENO) < 0)
+      {
+        perror("dup2 output failed\n");
+      }
+      close(output_fd);
+    }
+
+    if (doing_pipe && argc > 0)
+    {
+      close(STDOUT_FILENO);
+      dup(pipe_fd[WRITE_END]);
+      close(pipe_fd[READ_END]);
+      close(pipe_fd[WRITE_END]);
+    }
+
+    execv(resolved_path, argv);
+    perror("execv failed");
+    exit(EXIT_FAILURE);
+  }
+  else
+  {
+    // parent process
+    if (foreground)
+    {
+      int status;
+      waitpid(pid, &status, 0);
+      fprintf(stderr, "Child process completed with status: %d\n", status);
+    }
+    else
+    {
+      fprintf(stderr, "Running in the background with PID: %d\n", pid);
+    }
+    if (doing_pipe)
+    {
+      close(pipe_fd[WRITE_END]);
+    }
+  }
+}
+
+void parse_line(void)
+{
+  char *argv[MAX_ARG + 1];
+  int argc;
+  // int pipe_fd[2]; /* 1 for producer and 0 for consumer. */
+  token_type_t type;
+  bool foreground;
+  bool doing_pipe;
+
+  input_fd = 0;
+  output_fd = 0;
+  argc = 0;
+
+  for (;;)
+  {
+
+    foreground = true;
+    doing_pipe = false;
+
+    type = gettoken(&argv[argc]);
+
+    switch (type)
+    {
+    case NORMAL:
+      argc += 1;
+      break;
+
+    case INPUT:
+      type = gettoken(&argv[argc]);
+      if (type != NORMAL)
+      {
+        error("expected file name: but found %s", argv[argc]);
+        return;
+      }
+
+      input_fd = open(argv[argc], O_RDONLY);
+
+      if (input_fd < 0)
+        error("cannot read from %s", argv[argc]);
+
+      break;
+
+    case OUTPUT:
+      type = gettoken(&argv[argc]);
+      if (type != NORMAL)
+      {
+        error("expected file name: but found %s", argv[argc]);
+        return;
+      }
+
+      output_fd = open(argv[argc], O_CREAT | O_WRONLY, PERM);
+
+      if (output_fd < 0)
+        error("cannot write to %s", argv[argc]);
+      break;
+
+    case PIPE:
+      doing_pipe = true;
+      if (pipe(pipe_fd) == -1)
+      {
+        error("pipe failed: %s", strerror(errno));
+        return;
+      }
+
+      // Forks the first command and connects its stdout to the pipe
+      run_program(argv, argc, false, true);
+      close(pipe_fd[WRITE_END]);
+      input_fd = pipe_fd[READ_END];
+      argc = 0;
+
+    case AMPERSAND:
+      foreground = false;
+
+      /*FALLTHROUGH*/
+
+    case NEWLINE:
+    case SEMICOLON:
+
+      if (argc == 0)
+        return;
+
+      argv[argc] = NULL;
+
+      run_program(argv, argc, foreground, doing_pipe);
 
       input_fd = 0;
       output_fd = 0;
       argc = 0;
 
-      for (;;) {
+      if (type == NEWLINE)
+        return;
 
-        foreground = true;
-        doing_pipe = false;
-
-        type = gettoken(&argv[argc]);
-
-        switch (type) {
-        case NORMAL:
-          argc += 1;
-          break;
-
-        case INPUT:
-          type = gettoken(&argv[argc]);
-          if (type != NORMAL) {
-            error("expected file name: but found %s", argv[argc]);
-            return;
-          }
-
-          input_fd = open(argv[argc], O_RDONLY);
-
-          if (input_fd < 0)
-            error("cannot read from %s", argv[argc]);
-
-          break;
-
-        case OUTPUT:
-          type = gettoken(&argv[argc]);
-          if (type != NORMAL) {
-            error("expected file name: but found %s", argv[argc]);
-            return;
-          }
-
-          output_fd = open(argv[argc], O_CREAT | O_WRONLY, PERM);
-
-          if (output_fd < 0)
-            error("cannot write to %s", argv[argc]);
-          break;
-
-        case PIPE:
-          doing_pipe = true;
-          if (pipe(pipe_fd) == -1) {
-            error("pipe failed: %s", strerror(errno));
-            return;
-          }
-
-          // Forks the first command and connects its stdout to the pipe
-          run_program(argv, argc, false, true);
-          close(pipe_fd[WRITE_END]);
-          input_fd = pipe_fd[READ_END];
-          argc = 0;
-
-        case AMPERSAND:
-          foreground = false;
-
-          /*FALLTHROUGH*/
-
-        case NEWLINE:
-        case SEMICOLON:
-
-          if (argc == 0)
-            return;
-
-          argv[argc] = NULL;
-
-          if (strcmp(argv[0], "cd") == 0) {
-            if (argc < 2) {
-              fprintf(stderr, "cd: missing arg\n");
-            } else {
-              change_directory(argv);
-            }
-          }
-
-          run_program(argv, argc, foreground, doing_pipe);
-
-          input_fd = 0;
-          output_fd = 0;
-          argc = 0;
-
-          if (type == NEWLINE)
-            return;
-
-          break;
-        }
-      }
+      break;
     }
+  }
+}
 
-    /* init_search_path: make a list of directories to look for programs in. */
-    static void init_search_path(void) {
-      char *dir_start;
-      char *path;
-      char *s;
-      list_t *p;
-      bool proceed;
+/* init_search_path: make a list of directories to look for programs in. */
+static void init_search_path(void)
+{
+  char *dir_start;
+  char *path;
+  char *s;
+  list_t *p;
+  bool proceed;
 
-      path = getenv("PATH");
+  path = getenv("PATH");
 
-      /* path may look like "/bin:/usr/bin:/usr/local/bin"
-       * and this function makes a list with strings
-       * "/bin" "usr/bin" "usr/local/bin"
-       *
-       */
+  /* path may look like "/bin:/usr/bin:/usr/local/bin"
+   * and this function makes a list with strings
+   * "/bin" "usr/bin" "usr/local/bin"
+   *
+   */
 
-      dir_start = malloc(1 + strlen(path));
-      if (dir_start == NULL) {
-        error("out of memory.");
-        exit(1);
-      }
+  dir_start = malloc(1 + strlen(path));
+  if (dir_start == NULL)
+  {
+    error("out of memory.");
+    exit(1);
+  }
 
-      strcpy(dir_start, path);
+  strcpy(dir_start, path);
 
-      path_dir_list = NULL;
+  path_dir_list = NULL;
 
-      if (path == NULL || *path == 0) {
-        path_dir_list = new_list("");
-        return;
-      }
+  if (path == NULL || *path == 0)
+  {
+    path_dir_list = new_list("");
+    return;
+  }
 
-      proceed = true;
+  proceed = true;
 
-      while (proceed) {
-        s = dir_start;
-        while (*s != ':' && *s != 0)
-          s++;
-        if (*s == ':')
-          *s = 0;
-        else
-          proceed = false;
+  while (proceed)
+  {
+    s = dir_start;
+    while (*s != ':' && *s != 0)
+      s++;
+    if (*s == ':')
+      *s = 0;
+    else
+      proceed = false;
 
-        insert_last(&path_dir_list, dir_start);
+    insert_last(&path_dir_list, dir_start);
 
-        dir_start = s + 1;
-      }
+    dir_start = s + 1;
+  }
 
-      p = path_dir_list;
+  p = path_dir_list;
 
-      if (p == NULL)
-        return;
+  if (p == NULL)
+    return;
 
 #if 0
 	do {
@@ -468,18 +507,23 @@ int search_path(const char *command, char *resolved_path, size_t size) {
 		p = p->succ;
 	} while (p != path_dir_list);
 #endif
-    }
+}
 
-    /* main: main program of simple shell. */
-    int main(int argc, char **argv) {
-      char *prompt = (argc >= 2 && !strncmp(argv[1], "-n", 3)) ? "" : "% ";
+/* main: main program of simple shell. */
+int main(int argc, char **argv)
+{
+  char *prompt = (argc >= 2 && !strncmp(argv[1], "-n", 3)) ? "" : "% ";
 
-      progname = argv[0];
+  progname = argv[0];
 
-      init_search_path();
+  init_search_path();
 
-      while (fetch_line(prompt) != EOF)
-        parse_line();
-
-      return 0;
-    }
+ if (!getcwd(previous_dir, MAXBUF)) {
+    previous_dir[0] = 0;
+  } while (fetch_line(prompt) != EOF)
+  {
+    parse_line();
+    check_zombies();
+  }
+  return 0;
+}
