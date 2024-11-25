@@ -15,6 +15,7 @@
 #define SWAP_PAGES (128)
 #define SWAP_SIZE (SWAP_PAGES * PAGESIZE)
 #undef DEBUG
+#define MAX_TRACE 1000
 
 #define ADD (0)
 #define ADDI (1)
@@ -85,6 +86,8 @@ static unsigned (*replace)(void);             /* Page repl. alg. */
 
 int x;
 static int diskwrites = 0;
+static unsigned trace[MAX_TRACE];
+static size_t trace_index = 0;
 
 unsigned make_instr(unsigned opcode, unsigned dest, unsigned s1, unsigned s2)
 {
@@ -143,7 +146,7 @@ static unsigned fifo_page_replace()
 
 static unsigned second_chance_replace()
 {
-    coremap_entry_t* entry;
+    coremap_entry_t *entry;
     static int next_page = -1; // Tracks the next page to consider.
 
     while (1)
@@ -152,13 +155,12 @@ static unsigned second_chance_replace()
         entry = &coremap[next_page];
         if (entry->owner == NULL || entry->owner->referenced)
         {
-           break;
+            break;
         }
         entry->owner->referenced = 0;
     }
     return next_page;
 }
-
 
 static unsigned take_phys_page()
 {
@@ -170,7 +172,7 @@ static unsigned take_phys_page()
     if (owner != NULL)
     { // page is used
         // page was modified, keeps coherency
-        
+
         if (owner->modified)
         {
             write_page(page, owner->page);
@@ -217,6 +219,12 @@ static void translate(unsigned virt_addr, unsigned *phys_addr, bool write)
 
     virt_page = virt_addr / PAGESIZE;
     offset = virt_addr & (PAGESIZE - 1);
+
+    // printf("page number: %d\n", virt_page);
+    if (trace_index < MAX_TRACE)
+    {
+        trace[trace_index++] = virt_page;
+    }
 
     if (!page_table[virt_page].inmemory)
         pagefault(virt_page);
@@ -531,4 +539,7 @@ int main(int argc, char **argv)
 
     printf("%d disk writes\n", diskwrites);
     printf("%llu page faults\n", num_pagefault);
+    for (size_t i = 0; i < trace_index; ++i) {
+      printf("Trace[%zu] = %u\n", i, trace[i]);
+    }
 }
