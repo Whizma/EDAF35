@@ -32,7 +32,7 @@ jmp     0,5,0           ; jump to return address
 ;
 st      31,1,-1         ; save return address
 subi    1,1,1           ; decrement stack pointer
-addi    3,0,2           ; N = 12
+addi    3,0,12           ; N = 12
 call    0,0,3           ; call fac
 ld      5,1,0           ; reload return address
 addi    1,1,1           ; increment stack pointer

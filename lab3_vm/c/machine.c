@@ -146,70 +146,73 @@ static unsigned fifo_page_replace()
 
 static unsigned second_chance_replace()
 {
-    coremap_entry_t *entry;
-    static int next_page = -1; // Tracks the next page to consider.
+    static unsigned next_page = 0;
+    unsigned start_page = next_page;
 
-    while (1)
-    {
+    do {
         next_page = (next_page + 1) % RAM_PAGES;
-        entry = &coremap[next_page];
-        if (entry->owner == NULL || entry->owner->referenced)
-        {
-            break;
-        }
+        coremap_entry_t *entry = &coremap[next_page];
+
+        if (entry->owner == NULL || !entry->owner->referenced) 
+            return next_page;
+
         entry->owner->referenced = 0;
-    }
+    } while (next_page != start_page);
+
     return next_page;
 }
 
 static unsigned take_phys_page()
 {
-    unsigned page; /* Page to be replaced. */
+    unsigned page = (*replace)();
+    coremap_entry_t *entry = &coremap[page];
 
-    page = (*replace)();
-    page_table_entry_t *owner = coremap[page].owner;
-
-    if (owner != NULL)
-    { // page is used
-        // page was modified, keeps coherency
-
-        if (owner->modified)
-        {
-            write_page(page, owner->page);
-        }
-
-        // update page table entry of owner
-        owner->inmemory = 0;
-        owner->modified = 0;
-        owner->referenced = 0;
+    if (entry->owner == NULL)
+    {
+        return page;
     }
+    
+    if (entry->owner->ondisk)
+    {
+        if (entry->owner->modified)
+        {
+            write_page(page, entry->owner->page);
+        }
+        entry->owner->page = entry->page;
+    }
+    else
+    {
+        unsigned swap = new_swap_page();
+        entry->owner->page = swap;
+        write_page(page, swap);
+    }
+    
+    entry->owner->inmemory = 0;
+    entry->owner->modified = 0;
+    entry->owner->referenced = 0;
+    entry->owner->ondisk = 1;
 
     return page;
 }
 
 static void pagefault(unsigned virt_page)
 {
-    unsigned page;
+    num_pagefault++;
 
-    num_pagefault += 1;
-
-    page = take_phys_page();
+    unsigned page = take_phys_page();
     page_table_entry_t *virt_page_entry = &page_table[virt_page];
+    coremap_entry_t *entry = &coremap[page];
 
-    // new swap page
-    if (!virt_page_entry->ondisk)
+    if (virt_page_entry->ondisk)
     {
-        virt_page_entry->page = new_swap_page();
-        virt_page_entry->ondisk = 1;
+        entry->page = virt_page_entry->page;
+        read_page(page, virt_page_entry->page);
     }
-
-    read_page(page, virt_page_entry->page);
 
     virt_page_entry->inmemory = 1;
     virt_page_entry->page = page;
+    entry->owner = virt_page_entry;
 
-    coremap[page].owner = virt_page_entry;
-    coremap[page].page = virt_page_entry->page;
 }
 
 static void translate(unsigned virt_addr, unsigned *phys_addr, bool write)
@@ -539,7 +542,8 @@ int main(int argc, char **argv)
 
     printf("%d disk writes\n", diskwrites);
     printf("%llu page faults\n", num_pagefault);
-    for (size_t i = 0; i < trace_index; ++i) {
-      printf("Trace[%zu] = %u\n", i, trace[i]);
+    for (size_t i = 0; i < trace_index; ++i)
+    {
+        printf("Trace[%zu] = %u\n", i, trace[i]);
     }
 }
