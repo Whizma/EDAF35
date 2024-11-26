@@ -1,0 +1,51 @@
+# Lab5-mm
+gawk-3.1.8.*
+gawk-3.1.8/
+.deps/
+
+# Zig
+zig-cache/
+zig-out/
+.zig-cache/
+
+# C/C++
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Other
+*~
+\#*\#
+
+# Lab 4 temp
+/lab4_fs/temp
+lab4_fs/temp
