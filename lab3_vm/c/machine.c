@@ -146,21 +146,22 @@ static unsigned fifo_page_replace()
 
 static unsigned second_chance_replace()
 {
-    static unsigned next_page = 0;
-    unsigned start_page = next_page;
+    coremap_entry_t *entry;
+    static int next_page = -1; 
 
-    do {
+    for(;;)
+    {
         next_page = (next_page + 1) % RAM_PAGES;
-        coremap_entry_t *entry = &coremap[next_page];
-
-        if (entry->owner == NULL || !entry->owner->referenced) 
-            return next_page;
-
+        entry = &coremap[next_page];
+        if (entry->owner == NULL || entry->owner->referenced)
+        {
+            break;
+        }
         entry->owner->referenced = 0;
-    } while (next_page != start_page);
-
+    }
     return next_page;
 }
+
 
 static unsigned take_phys_page()
 {
