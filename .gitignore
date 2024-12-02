@@ -47,5 +47,8 @@ zig-out/
 \#*\#
 
 # Lab 4 temp
-/lab4_fs/temp
-lab4_fs/temp
+lab4_fs/c/temp
+lab4_fs/c/format_myfs
+lab4_fs/c/info_myfs
+lab4_fs/c/ssfs
+lab4_fs/c/RAWDISK_SSFS
