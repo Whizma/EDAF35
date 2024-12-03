@@ -166,22 +166,39 @@ static int do_read(const char *path, char *buffer, size_t size, off_t offset,
     unsigned bid = de->first_block;
 
     char bcache[BLOCK_SIZE];
-    // ... //
+    
+    unsigned int byte_offset = offset % BLOCK_SIZE;
+    unsigned int block_offset = offset / BLOCK_SIZE;
+    unsigned short *bmap = load_blockmap();
+
+    for(int i = 0; i < block_offset;i++) {
+        bid = bmap[bid];
+    }
+
+    if(bid == EOF_BLOCK) return 0;
     // reads the block into the cache
     readBlock(bid, bcache);
     // cannot read all maybe?
-    size_t rsize = min(size, BLOCK_SIZE);
-    // ... //
+    size_t rsize = min(size, BLOCK_SIZE - byte_offset);
+    memcpy(buffer, bcache + byte_offset, rsize);
 
-    // we now fill the buffer with this block contents
-    // TODO: [READ_OFFSET] account for the offset! May need to traverse the blocks
-    // of this file until the block holding the right offset. Have a look at
-    // do_write.
-
-    memcpy(buffer, bcache, rsize);
-
-    // how much did we read?
+    size -= rsize;
+    bid = bmap[bid];
+    while(size >= BLOCK_SIZE && bid != EOF_BLOCK) {
+        readBlock(bid, bcache);
+        memcpy(buffer + rsize, bcache, BLOCK_SIZE);
+        bid = bmap[bid];
+        size -= BLOCK_SIZE;
+        rsize += BLOCK_SIZE;
+    }
+    
+    if (size > 0 && bid != EOF_BLOCK) {
+        readBlock(bid, bcache);
+        memcpy(buffer + rsize, bcache, size);
+        rsize += size;
+    }
     return rsize;
+
 }
 
 // Writes buffer to file, at given offset. Should extend the file if necessary
@@ -347,7 +364,7 @@ static int do_truncate(const char *path, off_t offset)
     printf("  > file exits. truncate it.");
 
     dir_entry *de = index2dir_entry(di);
-    de->size_bytes = 0;
+    // de->size_bytes = offset;
 
     // TODO: [TRUNC_FREE] also free the blocks of this file!
     // load block map
@@ -357,22 +374,23 @@ static int do_truncate(const char *path, off_t offset)
     unsigned short cur = de->first_block;
 
     // Shrinking
-
     if (target_blocks < current_blocks)
     {
+        printf("shrinking \n");
         unsigned short prev = EOF_BLOCK;
 
-        for (unsigned i = 0; i > target_blocks; i++)
+        for (unsigned i = 0; i < target_blocks; i++)
         {
             prev = cur;
             cur = bmap[cur];
+            printf("prev, cur: %d,  %d", prev, cur);
         }
 
         while (cur != EOF_BLOCK)
         {
             unsigned short next = bmap[cur];
             free_block(cur);
-            cur = next;
+            cur = next;        
         }
 
         if (prev != EOF_BLOCK)
@@ -388,7 +406,7 @@ static int do_truncate(const char *path, off_t offset)
     }
     else if (target_blocks > current_blocks)
     {
-
+        printf("growing \n");
         if (cur == EOF_BLOCK)
         {
             cur = alloc_block();
@@ -453,7 +471,29 @@ static int do_rename(const char *opath, const char *npath)
 static int do_unlink(const char *path)
 {
     printf("--> Trying to remove %s\n", path);
+    const char *fn = &path[1];
 
+    int di = find_dir_entry(fn);
+    if (di < 0)
+    {
+        printf("No such file: %s\n", path);
+        return -ENOENT;
+    } 
+
+    dir_entry *de = index2dir_entry(di);
+    unsigned short cur = de->first_block;
+    unsigned short next;
+    unsigned short *bmap = load_blockmap();
+    while (cur != EOF_BLOCK) {
+        next = bmap[cur];
+        free_block(cur);
+        cur = next;
+    }
+    de->first_block = EOF_BLOCK;
+    de->size_bytes = 0;
+    strcpy(de->name, "");
+    save_blockmap();
+    save_directory();
     return 0; // reports success, but does nothing
 }
 
