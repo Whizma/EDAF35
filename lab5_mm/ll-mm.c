@@ -253,18 +253,15 @@ static void merge_blocks(block *pb)
 */
 void free(void *ptr)
 {
-    /* TODO: Implement this */
-    if (ptr == NULL)
-    {
+    if (ptr == NULL || ptr == (void *)1) {
         return;
     }
+    
     block *b = find_block(ptr);
-    if (b == NULL || b->is_free)
-    {
-        return;
+    if (b && !b->is_free) {
+        b->is_free = true;
+        merge_blocks(b);  // Merge with adjacent free blocks
     }
-    b->is_free = true;
-    merge_blocks(b);
 }
 
 /*
@@ -278,7 +275,7 @@ void *malloc(size_t size)
     /* TODO: Implement this */
     if (size == 0)
     {
-        return (void*) 1;
+        return (void *)1;
     }
 
     if (first == NULL)
@@ -287,27 +284,26 @@ void *malloc(size_t size)
         return block_to_data(first);
     }
 
-    void *last_addr = _sbrk(0);
-    for (block *current = first; current != last_addr; current = current->next)
+    for (block *current = first; current != sbrk(0); current = current->next)
     {
-        // Check if block is free and has enough space
-        if (current->is_free && block_data_size(current) >= aligned_size(size))
+        if (block_total_size(current) == size && current->is_free)
         {
-            current->is_free = false;
-            split_block(current, size);
 
             return block_to_data(current);
         }
-    }
+        else if (block_total_size(current) > size && current->is_free)
+        {
+            split_block(current, size);
+            return block_to_data(current);
+        }
+        else
+        {
+            block *new_blocks = new_block(size);
 
-    block *new = new_block(size);
-    block *current = first;
-    while (current->next != NULL)
-    {
-        current = current->next;
+            return block_to_data(new_blocks);
+        }
     }
-    current->next = new;
-    return block_to_data(new);
+    return block_to_data(first);
 }
 
 /*
@@ -364,35 +360,42 @@ void *calloc(size_t nitems, size_t item_size)
 void *realloc(void *ptr, size_t size)
 {
     /* TODO: Implement this */
-    if (ptr == NULL) {
+    if (ptr == NULL)
+    {
         return malloc(size);
     }
-    if (size == 0) {
+    if (size == 0)
+    {
         free(ptr);
         return NULL;
     }
 
     block *existing = find_block(ptr);
-    if (existing == NULL) {
+    if (existing == NULL)
+    {
         return NULL;
     }
 
     size_t current_size = block_data_size(existing);
-    size_t requested_size = aligned_size(size);
+    // size_t requested_size = aligned_size(size);
 
-    //Shrink
-    if (requested_size <= current_size) {
+    // Shrink
+    if (size <= current_size)
+    {
         split_block(existing, size);
         return ptr;
     }
 
-    //Expand
-    void *new = malloc(size);
-    if (new == NULL) {
-        return NULL;
+    // Expand
+    if (existing->next != _sbrk(0) && existing->is_free && block_total_size(existing) + block_total_size(existing->next) >= size + META_SIZE)
+    {
+        split_block(existing, size);
+        merge_blocks(existing);
+        return ptr;
     }
-    size_t copy_size = (current_size < size) ? current_size : size;
-    memcpy(new, ptr, copy_size);
+    // Need to allocate more
+    void *new = malloc(size);
+    memcpy(new, ptr, current_size);
     free(ptr);
     return new;
 }
