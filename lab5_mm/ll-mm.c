@@ -253,14 +253,16 @@ static void merge_blocks(block *pb)
 */
 void free(void *ptr)
 {
-    if (ptr == NULL || ptr == (void *)1) {
+    if (ptr == NULL || ptr == (void *)1)
+    {
         return;
     }
-    
+
     block *b = find_block(ptr);
-    if (b && !b->is_free) {
+    if (b)
+    {
         b->is_free = true;
-        merge_blocks(b);  // Merge with adjacent free blocks
+        merge_blocks(b); // Merge with adjacent free blocks
     }
 }
 
@@ -272,7 +274,6 @@ void free(void *ptr)
 */
 void *malloc(size_t size)
 {
-    /* TODO: Implement this */
     if (size == 0)
     {
         return (void *)1;
@@ -284,26 +285,23 @@ void *malloc(size_t size)
         return block_to_data(first);
     }
 
-    for (block *current = first; current != sbrk(0); current = current->next)
+    // Try finding a free block first
+    for (block *current = first; current != _sbrk(0); current = current->next)
     {
-        if (block_total_size(current) == size && current->is_free)
-        {
+        if (!current->is_free)
+            continue;
 
-            return block_to_data(current);
-        }
-        else if (block_total_size(current) > size && current->is_free)
+        if (block_data_size(current) >= size)
         {
             split_block(current, size);
+            current->is_free = false;
             return block_to_data(current);
         }
-        else
-        {
-            block *new_blocks = new_block(size);
-
-            return block_to_data(new_blocks);
-        }
     }
-    return block_to_data(first);
+
+    // No suitable block found, create new one
+
+    return block_to_data(new_block(size));
 }
 
 /*
@@ -377,8 +375,6 @@ void *realloc(void *ptr, size_t size)
     }
 
     size_t current_size = block_data_size(existing);
-    // size_t requested_size = aligned_size(size);
-
     // Shrink
     if (size <= current_size)
     {
@@ -387,13 +383,22 @@ void *realloc(void *ptr, size_t size)
     }
 
     // Expand
-    if (existing->next != _sbrk(0) && existing->is_free && block_total_size(existing) + block_total_size(existing->next) >= size + META_SIZE)
+    merge_blocks(existing->next);
+
+    if (existing->next != _sbrk(0) &&                                                      // If next block exists
+        existing->next->is_free &&                                                         // and next block is free
+        block_total_size(existing) + block_total_size(existing->next) >= size + META_SIZE) // and combined size is enough
     {
-        split_block(existing, size);
-        merge_blocks(existing);
+        // First merge the blocks
+        existing->next = existing->next->next; // Skip over next block to merge it
+
+        // Then split if we have extra space
+        if (block_total_size(existing) > size + META_SIZE)
+        {
+            split_block(existing, size);
+        }
         return ptr;
     }
-    // Need to allocate more
     void *new = malloc(size);
     memcpy(new, ptr, current_size);
     free(ptr);
