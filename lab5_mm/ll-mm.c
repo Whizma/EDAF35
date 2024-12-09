@@ -278,33 +278,26 @@ void *malloc(size_t size)
     /* TODO: Implement this */
     if (size == 0)
     {
-        return new_block(0);
+        return (void*) 1;
     }
+
+    if (first == NULL)
+    {
+        first = new_block(size);
+        return block_to_data(first);
+    }
+
     void *last_addr = _sbrk(0);
     for (block *current = first; current != last_addr; current = current->next)
     {
         // Check if block is free and has enough space
         if (current->is_free && block_data_size(current) >= aligned_size(size))
         {
-            // Mark as not free
             current->is_free = false;
-
-            // Try to split the block if there's significant extra space
-            ssize_t split_result = split_block(current, size);
-
-            // If split was successful (positive remainder), the excess is now a free block
-            if (split_result >= 0)
-            {
-                return block_to_data(current);
-            }
+            split_block(current, size);
 
             return block_to_data(current);
         }
-    }
-    if (first == NULL)
-    {
-        first = new_block(size);
-        return block_to_data(first);
     }
 
     block *new = new_block(size);
@@ -371,5 +364,35 @@ void *calloc(size_t nitems, size_t item_size)
 void *realloc(void *ptr, size_t size)
 {
     /* TODO: Implement this */
-    return NULL;
+    if (ptr == NULL) {
+        return malloc(size);
+    }
+    if (size == 0) {
+        free(ptr);
+        return NULL;
+    }
+
+    block *existing = find_block(ptr);
+    if (existing == NULL) {
+        return NULL;
+    }
+
+    size_t current_size = block_data_size(existing);
+    size_t requested_size = aligned_size(size);
+
+    //Shrink
+    if (requested_size <= current_size) {
+        split_block(existing, size);
+        return ptr;
+    }
+
+    //Expand
+    void *new = malloc(size);
+    if (new == NULL) {
+        return NULL;
+    }
+    size_t copy_size = (current_size < size) ? current_size : size;
+    memcpy(new, ptr, copy_size);
+    free(ptr);
+    return new;
 }
