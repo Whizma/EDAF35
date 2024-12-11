@@ -261,6 +261,11 @@ void free(void *ptr)
     block *b = find_block(ptr);
     if (b)
     {
+        // Move sbrk if the block at end of heap
+        if(b == _sbrk(0)){
+            _sbrk(-block_data_size(b));
+            // return;
+        }
         b->is_free = true;
         merge_blocks(b); // Merge with adjacent free blocks
     }
@@ -383,6 +388,7 @@ void *realloc(void *ptr, size_t size)
     }
 
     // Expand
+    // Not needed but we believe it might be faster/save blocks as the next block is as large as possible
     merge_blocks(existing->next);
 
     if (existing->next != _sbrk(0) &&                                                      // If next block exists
